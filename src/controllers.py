@@ -2,7 +2,7 @@ import numpy as np
 from scipy.linalg import solve_continuous_are
 from dynamics import skew, quat_to_rotmat
 from uav_params import UAVParams
-
+from quat_mat import rotmat_to_quat, quat_mult, quat_conj
 
 class PositionController:
     """
@@ -14,8 +14,8 @@ class PositionController:
     через freeze_integral=True.
     """
 
-    MAX_INT       = 3.0   # м·с  — порог насыщения интегратора
-    MAX_FC        = 3.0 * UAVParams.m * UAVParams.g  # Н — лимит |f_c|
+    MAX_INT       = 2.0   # м·с  — порог насыщения интегратора
+    MAX_FC        = 2.0 * UAVParams.m * UAVParams.g  # Н — лимит |f_c|
 
     def __init__(self):
         A = np.array([[0, 1, 0],
@@ -60,48 +60,56 @@ class PositionController:
     def reset_integral(self):
         self.integral = np.zeros(3)
 
-
 class AttitudePlanner:
-    """attitude_planner из MATLAB, защита от сингулярности."""
-
-    # Минимальный размер |f_c|, ниже которого берём fallback
-    FC_MIN = 0.5   # Н
+    FC_MIN       = 0.5
+    MAX_TILT_DEG = 25.0
 
     @staticmethod
     def compute(psi_d: float, f_c: np.ndarray) -> np.ndarray:
+        """
+        Возвращает q_d: np.ndarray [w, x, y, z] — желаемый кватернион.
+        """
         fc_norm = np.linalg.norm(f_c)
-
-        # Если тяга почти нулевая — сохраняем вертикаль
         if fc_norm < AttitudePlanner.FC_MIN:
-            f_c = np.array([0.0, 0.0, AttitudePlanner.FC_MIN])
+            f_c     = np.array([0.0, 0.0, AttitudePlanner.FC_MIN])
             fc_norm = AttitudePlanner.FC_MIN
 
         k_p = f_c / fc_norm
-        h_p = np.array([np.cos(psi_d), np.sin(psi_d), 0.0])
 
-        cross = np.cross(k_p, h_p)
+        if k_p[2] > 1e-6:
+            tilt_max  = np.deg2rad(AttitudePlanner.MAX_TILT_DEG)
+            tan_tilt  = np.tan(tilt_max)
+            k_xy      = np.linalg.norm(k_p[:2])
+            k_xy_max  = tan_tilt * k_p[2]
+            if k_xy > k_xy_max and k_xy > 1e-9:
+                k_p[:2] *= k_xy_max / k_xy
+                k_p      = k_p / np.linalg.norm(k_p)
+
+        h_p        = np.array([np.cos(psi_d), np.sin(psi_d), 0.0])
+        cross      = np.cross(k_p, h_p)
         cross_norm = np.linalg.norm(cross)
 
-        # Сингулярность: k_p почти параллелен h_p
-        # (происходит когда thrust почти горизонтален по курсу)
         if cross_norm < 1e-4:
-            # Fallback: строим j_p через мировой Z или X
-            alt = np.array([0., 0., 1.]) if abs(k_p[2]) < 0.9 \
-                  else np.array([1., 0., 0.])
-            cross = np.cross(k_p, alt)
+            alt        = np.array([0.,0.,1.]) if abs(k_p[2]) < 0.9 \
+                         else np.array([1.,0.,0.])
+            cross      = np.cross(k_p, alt)
             cross_norm = np.linalg.norm(cross)
 
         j_p = cross / cross_norm
         i_p = np.cross(j_p, k_p)
 
-        return np.column_stack([i_p, j_p, k_p])   # 3×3, ортонормальна по построению
-
-
+        R_d = np.column_stack([i_p, j_p, k_p])
+        return rotmat_to_quat(R_d)   # ← единственное новое
+    
 class AttitudeController:
     """
-    SO(3) attitude controller.
-    Входы: R_current (3×3), R_d (3×3), omega_b (3,)
+    Кватернионный attitude controller.
+    Входы: q (4,), q_d (4,), omega_b (3,)
     Выход: tau_b (3,)
+
+    Закон управления:
+        e_q  = vect(q_d* ⊗ q)  · sign(scal(q_d* ⊗ q))
+        tau  = −k_q ⊙ e_q − K_ω @ ω + ω × Jω
     """
 
     def __init__(self):
@@ -109,21 +117,51 @@ class AttitudeController:
         w_n = 12.0
         xi  = 0.5
 
-        Kw = 2*xi*w_n * np.diag([p.J[0,0], p.J[1,1], p.J[2,2]])
-        Kr_diag = w_n**2 * np.array([p.J[0,0], p.J[1,1], p.J[2,2]])
+        # ── Пересчёт коэффициентов ──────────────────────────────────────────
+        # В SO(3) ошибка: e_R ≈ θ·n̂  (для малых углов)
+        # В кватернионах: ε_e ≈ (θ/2)·n̂
+        # Чтобы сохранить ту же полосу пропускания (w_n), нужно удвоить k_p:
+        #   J·θ̈ = −k_q·(θ/2) − k_ω·θ̇  →  ω_n² = k_q/(2J)  →  k_q = 2·J·ω_n²
+        J_diag   = np.array([p.J[0,0], p.J[1,1], p.J[2,2]])
+        self.k_q     = 2.0 * w_n**2 * J_diag        # пропорциональный
+        self.k_omega = 2.0 * xi * w_n * np.diag(J_diag)  # демпфирующий
 
-        A = np.array([[0,1,1],[1,0,1],[1,1,0]])
-        k_vect = np.linalg.solve(A, Kr_diag)
+        # Интеграл только по yaw
+        self.k_i_yaw       = 0.15 * self.k_q[2]
+        self.yaw_integral  = 0.0
+        self.freeze_integral = False
+        self.max_yaw_int   = np.deg2rad(25.0)
 
-        self.k_R     = k_vect
-        self.k_omega = Kw
+    def compute(self, q: np.ndarray, q_d: np.ndarray,
+                omega_b: np.ndarray, dt: float) -> np.ndarray:
 
-    def compute(self, R: np.ndarray, R_d: np.ndarray,
-                omega_b: np.ndarray) -> np.ndarray:
-        e_R_mat = 0.5 * (R_d.T @ R - R.T @ R_d)
-        e_R = np.array([e_R_mat[2,1], e_R_mat[0,2], e_R_mat[1,0]])
+        # ── Кватернион ошибки (аналог R_d.T @ R в SO(3)) ───────────────────
+        q_e = quat_mult(quat_conj(q_d), q)
 
-        tau = (-self.k_R * e_R
+        # Двойное покрытие: q и −q — одна ориентация.
+        # Берём представление с w > 0 → кратчайший путь вращения.
+        if q_e[0] < 0:
+            q_e = -q_e
+
+        e_q = q_e[1:]   # векторная часть: [ex, ey, ez]
+
+        # ── Интеграл по yaw с anti-windup ───────────────────────────────────
+        if not self.freeze_integral:
+            self.yaw_integral += e_q[2] * dt
+            self.yaw_integral  = np.clip(self.yaw_integral,
+                                         -self.max_yaw_int,
+                                         self.max_yaw_int)
+
+        # Медленное стравливание у нуля
+        if abs(e_q[2]) < np.deg2rad(2.0) and abs(omega_b[2]) < np.deg2rad(5.0):
+            self.yaw_integral *= 0.98
+
+        # ── Момент управления ────────────────────────────────────────────────
+        tau = (-self.k_q * e_q
                - self.k_omega @ omega_b
-               + np.cross(omega_b, UAVParams.J @ omega_b))
+               - np.array([0.0, 0.0, self.k_i_yaw * self.yaw_integral])
+               + np.cross(omega_b,  UAVParams.J @ omega_b))   # гироскопическая компенсация
         return tau
+
+    def reset_integral(self):
+        self.yaw_integral = 0.0

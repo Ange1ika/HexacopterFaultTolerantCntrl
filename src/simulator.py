@@ -116,6 +116,8 @@ def simulation_loop(state: SimState):
             T_max = T_max_new
             pos_c.reset_integral()
             pos_c.freeze_integral = True    # блокируем интегратор
+            att_c.reset_integral()
+            att_c.freeze_integral = True
             print(f"[SIM] t={t:.2f}s — ОТКАЗ! "
                   f"p={dyn.p.round(2)}, v={v_inertial.round(2)}")
 
@@ -137,13 +139,15 @@ def simulation_loop(state: SimState):
             f_c = f_c * (TC_MIN / max(fc_norm, 1e-9))
 
         # ── 7. Attitude planner ───────────────────────────────
-        R_d = AttitudePlanner.compute(psi_d, f_c)
+        q_d = AttitudePlanner.compute(psi_d, f_c) 
         Tc  = np.linalg.norm(f_c)
         if latch.latched and T_max > 0:
             Tc = min(Tc, T_max)
 
         # ── 8. Attitude controller ────────────────────────────
-        tau = att_c.compute(dyn.R, R_d, dyn.omega_b)
+        q_d = AttitudePlanner.compute(psi_d, f_c)   # было: R_d = ...
+
+        tau = att_c.compute(dyn.q, q_d, dyn.omega_b, SIM_DT)  # было: dyn.R, R_d
 
         # ── 9. Control allocation ─────────────────────────────
         omega_cmd, _, _ = alloc.compute(tau, Tc, lambda_r, t)
@@ -156,6 +160,7 @@ def simulation_loop(state: SimState):
             z_err = abs(dyn.p[2] - p_d[2])
             if v_mag < 0.3 and z_err < 0.5:
                 pos_c.freeze_integral = False
+                att_c.freeze_integral = False
 
         # ── 11. Шаг динамики ──────────────────────────────────
         dyn.step(omega_cmd, SIM_DT, lambda_r)

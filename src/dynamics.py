@@ -34,7 +34,6 @@ def quat_to_euler(q):
     phi   = np.arctan2(C[2,1], np.sqrt(C[2,0]**2 + C[2,2]**2))
     return np.array([psi, theta, phi])
 
-
 class HexacopterDynamics:
     """
     Состояние: p (3), q (4), v_b (3), omega_b (3), omega_r (6)
