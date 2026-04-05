@@ -17,3 +17,5 @@ Thumbs.db
 
 # Unity meta is important!
 !*.meta
+
+__pycache__
