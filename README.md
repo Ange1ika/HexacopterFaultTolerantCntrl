@@ -38,44 +38,6 @@ python3 simulator.py
 3. Название: `HexacopterSim`
 4. Нажми **Create project**
 
-### Добавление скриптов
-Скопируй все `.cs` файлы из `unity_project/Assets/Scripts/`
-в папку `Assets/Scripts/` твоего проекта Unity.
-
-### Настройка сцены
-
-**Вариант А — автоматически:**
-1. В Hierarchy создай пустой GameObject → назови `SceneSetup`
-2. Добавь компонент `SceneSetup`
-3. Нажми **Play** — сцена создастся сама
-
-**Вариант Б — вручную:**
-
-1. **Создай SimManager:**
-   - Hierarchy → Create Empty → `SimManager`
-   - Add Component → `SimulatorClient`
-
-2. **Создай модель дрона:**
-   - Hierarchy → Create Empty → `Hexacopter`
-   - Add Component → `DroneController`
-   - Назначь `Sim Client` → перетащи `SimManager`
-
-3. **Создай HUD:**
-   - Hierarchy → Create Empty → `HUD`
-   - Add Component → `DroneHUD`
-   - Назначь `Sim Client`
-
-4. **Создай траекторию:**
-   - Hierarchy → Create Empty → `TrajectoryVis`
-   - Add Component → `TrajectoryVisualizer`
-   - Назначь `Sim Client` и `Drone Transform`
-
-5. **Камера:**
-   - Выбери `Main Camera`
-   - Add Component → `CameraFollow`
-
----
-
 ## 3. Запуск
 
 ```
@@ -87,10 +49,6 @@ python3 simulator.py
     Нажми ▶ Play
 ```
 
-Дрон начнёт лететь по спирали.  
-В t=10s мотор 3 отказывает → дрон зависает на месте.
-
----
 
 ## 4. Параметры симуляции
 
@@ -105,12 +63,6 @@ T_FAIL = {3: 10.0}        # отказ мотора 3 в t=10s
 SIM_DT         = 0.01    # шаг физики
 SIM_DURATION   = 100.0   # длительность (0 = бесконечно)
 ```
-
-Изменяй траекторию в `SimulatorClient`:
-```python
-traj = TrajectoryPlanner(radius=4.0, omega_t=0.1, w_t=1.0)
-```
-
 ---
 
 ## 5. Структура проекта

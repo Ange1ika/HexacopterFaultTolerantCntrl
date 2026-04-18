@@ -19,8 +19,9 @@ class TrajectoryPlanner:
     # Чем больше — тем резче остановка.
     # Рекомендуется 0.8…2.0 для типичных скоростей 1-3 м/с.
     BRAKE_K = 1.2
+    FAILURE_CONTROL = False
 
-    def __init__(self, radius=10.0, omega_t=0.1, w_t=1.0):
+    def __init__(self, radius=10.0, omega_t=0.4, w_t=1.0):
         self.radius  = radius
         self.omega_t = omega_t
         self.w_t     = w_t
@@ -38,7 +39,7 @@ class TrajectoryPlanner:
         v_fault    — инерциальная скорость в момент отказа
         t_fault    — время отказа
         """
-        if fault_flag:
+        if fault_flag and not self.FAILURE_CONTROL:
             k  = self.BRAKE_K
             dt = max(time - t_fault, 0.0)
             decay = np.exp(-k * dt)
@@ -49,56 +50,79 @@ class TrajectoryPlanner:
             p_d = p_hover - (v_fault / k) * decay
             v_d = v_fault * decay
             a_d = -k * v_fault * decay
+            
+            if np.mean(v_d) > 0.05:
+                self.FAILURE_CONTROL = True
+            return p_d, v_d, a_d, psi_fault
+        
+        elif self.FAILURE_CONTROL:
+            # Если скорость уже почти нулевая, продолжать спираль, чтобы не стоять на месте     
+            r  = self.radius
+            wt = self.omega_t
+            wz = self.w_t
+            th = wt * time
+            p_d = np.array([r * np.cos(th),
+                            r * np.sin(th),
+                            wz * time])
+            v_d = np.array([-r * np.sin(th) * wt,
+                            r * np.cos(th) * wt,
+                            wz])
+            a_d = np.array([-r * np.cos(th) * wt**2,
+                            -r * np.sin(th) * wt**2,
+                            0.0])
+            psi_d = th
 
             return p_d, v_d, a_d, psi_fault
 
-        # ── Нормальный режим: спираль ──────────────────────────
-        # r  = self.radius
-        # wt = self.omega_t
-        # wz = self.w_t
-        # th = wt * time
-
-        # p_d = np.array([r * np.cos(th),
-        #                 r * np.sin(th),
-        #                 wz * time])
-        # v_d = np.array([-r * np.sin(th) * wt,
-        #                  r * np.cos(th) * wt,
-        #                  wz])
-        # a_d = np.array([-r * np.cos(th) * wt**2,
-        #                 -r * np.sin(th) * wt**2,
-        #                  0.0])
-        # psi_d = th
-
-        CLIMB_TIME = 3.0     # время набора высоты (сек)
-        VZ = 1.0             # вертикальная скорость (м/с)
-        VX = 2.0             # горизонтальная скорость (м/с)
+        # CLIMB_TIME = 3.0     # время набора высоты (сек)
+        # VZ = 1.0             # вертикальная скорость (м/с)
+        # VX = 2.0             # горизонтальная скорость (м/с)
 
         if not fault_flag:
-            if time < CLIMB_TIME:
-                # ── Фаза 1: подъём ──
-                p_d = np.array([0.0,
-                                0.0,
-                                VZ * time])
-                v_d = np.array([0.0,
-                                0.0,
-                                VZ])
-                a_d = np.array([0.0, 0.0, 0.0])
+            # if time < CLIMB_TIME:
+            #     # ── Фаза 1: подъём ──
+            #     p_d = np.array([0.0,
+            #                     0.0,
+            #                     VZ * time])
+            #     v_d = np.array([0.0,
+            #                     0.0,
+            #                     VZ])
+            #     a_d = np.array([0.0, 0.0, 0.0])
 
-            else:
-                # ── Фаза 2: полёт вперёд ──
-                dt = time - CLIMB_TIME
+            # else:
+            #     # ── Фаза 2: полёт вперёд ──
+            #     dt = time - CLIMB_TIME
 
-                p_d = np.array([VX * dt,
-                                0.0,
-                                VZ * CLIMB_TIME])   # держим высоту
+            #     p_d = np.array([VX * dt,
+            #                     0.0,
+            #                     VZ * CLIMB_TIME])   # держим высоту
 
-                v_d = np.array([VX,
-                                0.0,
-                                0.0])
+            #     v_d = np.array([VX,
+            #                     0.0,
+            #                     0.0])
 
-                a_d = np.array([0.0, 0.0, 0.0])
+            #     a_d = np.array([0.0, 0.0, 0.0])
 
-            psi_d = 0.0   # смотрим вперёд
+            # psi_d = 0.0   # смотрим вперёд
+            # return p_d, v_d, a_d, psi_d
+            
+            
+            # ── Нормальный режим: спираль ──────────────────────────
+            r  = self.radius
+            wt = self.omega_t
+            wz = self.w_t
+            th = wt * time
+
+            p_d = np.array([r * np.cos(th),
+                            r * np.sin(th),
+                            wz * time])
+            v_d = np.array([-r * np.sin(th) * wt,
+                            r * np.cos(th) * wt,
+                            wz])
+            a_d = np.array([-r * np.cos(th) * wt**2,
+                            -r * np.sin(th) * wt**2,
+                            0.0])
+            psi_d = th
             return p_d, v_d, a_d, psi_d
 
     

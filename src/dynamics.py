@@ -65,6 +65,7 @@ class HexacopterDynamics:
         k4 = self._deriv(state + dt*k3,      omega_cmd, lambda_r)
         state_new = state + (dt/6)*(k1 + 2*k2 + 2*k3 + k4)
         self._unpack(state_new)
+        
         # Нормализация кватерниона
         self.q /= np.linalg.norm(self.q)
 

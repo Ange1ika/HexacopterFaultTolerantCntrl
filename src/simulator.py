@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from uav_params         import UAVParams
 from dynamics           import HexacopterDynamics, quat_to_rotmat
-from controllers        import PositionController, AttitudePlanner, AttitudeController
+from controllers        import MPCPositionController, PositionController, AttitudePlanner, AttitudeController
 from control_allocation import FaultTolerantAllocator, FaultLatch
 from trajectory         import TrajectoryPlanner
 from plotter            import SimulationLogger, Plotter
@@ -70,7 +70,8 @@ def build_packet(dyn, fault_flag, p_d, t, omega_cmd) -> dict:
 
 def simulation_loop(state: SimState):
     dyn    = HexacopterDynamics()
-    pos_c  = PositionController()
+    #pos_c  = PositionController()
+    pos_c = MPCPositionController()
     att_c  = AttitudeController()
     alloc  = FaultTolerantAllocator()
     latch  = FaultLatch()
@@ -165,9 +166,10 @@ def simulation_loop(state: SimState):
         # ── 11. Шаг динамики ──────────────────────────────────
         dyn.step(omega_cmd, SIM_DT, lambda_r)
         logger.log(t, dyn, p_d, v_d, omega_cmd,
-                   fc=f_c, Tc=Tc,
-                   integral=pos_c.integral.copy(),
-                   fault=fault_flag)
+                fc=f_c, Tc=Tc,
+                integral=pos_c.integral.copy(),
+                u0=pos_c.u0_last,         # ← добавить
+                fault=fault_flag)
 
         # ── Inline-предупреждения ──────────────────────────────
         v_inertial_post = dyn.R @ dyn.v_b

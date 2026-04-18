@@ -1,6 +1,6 @@
 import numpy as np
 from uav_params import UAVParams
-
+from QP_allocator import QPAllocator
 
 class FaultTolerantAllocator:
     """
@@ -17,7 +17,7 @@ class FaultTolerantAllocator:
     #T_FAIL = 0
 
     ALPHA_MARGIN = 0.85
-
+    qp = QPAllocator()
     def __init__(self):
         self.F   = UAVParams.build_input_map()   # 4×6
         self.k_f = UAVParams.k_f
@@ -54,7 +54,6 @@ class FaultTolerantAllocator:
 
         # --- 3. Команды в зависимости от режима ---
         mode = fault_flag   # 0 = норма, 1 = hover
-
         tau_cmd = tau.copy()
         Tc_cmd  = Tc
 
@@ -77,6 +76,10 @@ class FaultTolerantAllocator:
         # --- 5. Тяга → скорость вращения ---
         u_full = np.zeros(self.Nr)
         u_full[active] = u_active
+        #u_max_full = lam * self.k_f * UAVParams.Omega_max**2   # shape (6,) — полный
+        
+        #u_full = self.qp.allocate(desired, active, u_max_full)
+        u_active = u_full[active]
 
         for i in range(self.Nr):
             if failed[i] or u_full[i] <= 0:
@@ -85,7 +88,6 @@ class FaultTolerantAllocator:
                 omega_cmd[i] = np.sqrt(u_full[i] / (lam[i] * self.k_f))
 
         return omega_cmd, fault_flag, T_max_avail
-
 
 class FaultLatch:
     """
