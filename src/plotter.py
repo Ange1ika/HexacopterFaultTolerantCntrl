@@ -4,7 +4,6 @@ from pathlib import Path
 
 from uav_params import UAVParams
 
-
 class SimulationLogger:
     """Сбор данных во время симуляции"""
 
