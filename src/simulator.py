@@ -44,7 +44,9 @@ class SimState:
         self.logger   = None
 
 
-def build_packet(dyn, fault_flag, p_d, t, omega_cmd) -> dict:
+def build_packet(dyn, fault_flag, p_d, t, omega_cmd,
+                 p_start, p_goal, landed,
+                 obstacle_types, obstacle_params) -> dict:
     euler = dyn.euler
     q     = dyn.q
     return {
@@ -63,6 +65,16 @@ def build_packet(dyn, fault_flag, p_d, t, omega_cmd) -> dict:
         "pdx": round(float(p_d[0]), 4),
         "pdy": round(float(p_d[1]), 4),
         "pdz": round(float(p_d[2]), 4),
+        "psx": round(float(p_start[0]), 4),
+        "psy": round(float(p_start[1]), 4),
+        "psz": round(float(p_start[2]), 4),
+        "pgx": round(float(p_goal[0]), 4),
+        "pgy": round(float(p_goal[1]), 4),
+        "pgz": round(float(p_goal[2]), 4),
+        "landed": int(bool(landed)),
+        "obstacle_count": int(len(obstacle_types)),
+        "obstacle_types": [int(v) for v in obstacle_types],
+        "obstacle_params": [round(float(v), 4) for v in obstacle_params],
         "omega_r":   [round(float(w), 1) for w in dyn.omega_r],
         "omega_cmd": [round(float(w), 1) for w in omega_cmd],
     }
@@ -70,12 +82,20 @@ def build_packet(dyn, fault_flag, p_d, t, omega_cmd) -> dict:
 
 def simulation_loop(state: SimState):
     dyn    = HexacopterDynamics()
+    # Начальная позиция дрона у края карты (окраина)
+    dyn.p  = np.array([-10.0, -10.0, 2.0], dtype=float)
     pos_c  = PositionController()
     att_c  = AttitudeController()
     alloc  = FaultTolerantAllocator()
     latch  = FaultLatch()
-    traj   = TrajectoryPlanner(radius=4.0, omega_t=0.1, w_t=1.0)
+    # Старт траектории совпадает с текущей стартовой позицией дрона в динамике.
+    traj   = TrajectoryPlanner(start_xyz=dyn.p.copy())
     logger = SimulationLogger()
+
+    # Метаданные планировщика для оффлайн-визуализации в Plotter
+    logger.start_xyz = traj.start_xyz.copy()
+    logger.goal_xyz = traj.goal_xyz.copy()
+    logger.obstacles_2d = traj.obstacles_2d()
 
     lambda_r  = np.ones(UAVParams.Nr)
     t         = 0.0
@@ -87,6 +107,13 @@ def simulation_loop(state: SimState):
     v_fault   = np.zeros(3)
     psi_fault = 0.0
     t_fault   = 0.0
+
+    # На случай коррекции старта планировщиком (если старт попадал в препятствие)
+    # синхронизируем динамику с валидной стартовой точкой.
+    dyn.p = traj.start_xyz.copy()
+    obstacle_types, obstacle_params = traj.obstacle_payload()
+    logger.obstacle_types = obstacle_types
+    logger.obstacle_params = obstacle_params
 
     print(f"[SIM] Запуск. dt={SIM_DT}s")
     print(f"[SIM] Отказ мотора в t="
@@ -184,7 +211,18 @@ def simulation_loop(state: SimState):
 
         # ── 12. Отправка в Unity ──────────────────────────────
         if t - t_last_send >= SEND_DT:
-            packet = build_packet(dyn, fault_flag, p_d, t, omega_cmd)
+            packet = build_packet(
+                dyn,
+                fault_flag,
+                p_d,
+                t,
+                omega_cmd,
+                traj.start_xyz,
+                traj.goal_xyz,
+                traj.landed,
+                obstacle_types,
+                obstacle_params,
+            )
             with state.lock:
                 state.data     = packet
                 state.sim_time = t
@@ -203,6 +241,7 @@ def simulation_loop(state: SimState):
 
     state.running = False
     state.logger  = logger
+    logger.save_csv("simulation_log.csv")
 
 
 def tcp_server(state: SimState):

@@ -1,7 +1,41 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import csv
+import pandas as pd
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+@staticmethod
+def load_csv(filename):
+    
+    df = pd.read_csv(filename)
 
+    log = SimulationLogger()
+
+    log.t   = df["t"].values
+
+    log.p   = df[["px","py","pz"]].values
+    log.p_d = df[["px_d","py_d","pz_d"]].values
+
+    log.v   = df[["vx","vy","vz"]].values
+    log.v_d = df[["vx_d","vy_d","vz_d"]].values
+
+    log.euler = df[["psi","theta","phi"]].values
+
+    # ω динамически
+    omega_cols = [c for c in df.columns if "omega_" in c and "cmd" not in c]
+    omega_cmd_cols = [c for c in df.columns if "omega_cmd" in c]
+
+    log.omega     = df[omega_cols].values
+    log.omega_cmd = df[omega_cmd_cols].values
+
+    log.fc        = df[["fc_x","fc_y","fc_z"]].values
+    log.Tc        = df["Tc"].values
+    log.integral  = df[["int_x","int_y","int_z"]].values
+    log.fault     = df["fault"].values
+
+    print(f"[LOG] Данные загружены из {filename}")
+
+    return log
 class SimulationLogger:
     """Сбор данных во время симуляции"""
 
@@ -19,6 +53,12 @@ class SimulationLogger:
         self.Tc        = []   # скалярная команда тяги
         self.integral  = []   # интегральный член (3,)
         self.fault     = []   # 0/1
+        # Метаданные от планировщика (опционально)
+        self.start_xyz  = None
+        self.goal_xyz   = None
+        self.obstacles_2d = None
+        self.obstacle_types = None
+        self.obstacle_params = None
 
     def log(self, t, dyn, p_d, v_d, omega_cmd,
             fc=None, Tc=None, integral=None, fault=0):
@@ -53,7 +93,98 @@ class SimulationLogger:
         self.Tc        = np.array(self.Tc)
         self.integral  = np.array(self.integral)
         self.fault     = np.array(self.fault)
+    
+    @staticmethod
+    def load_csv(filename):
 
+
+        df = pd.read_csv(filename)
+
+        log = SimulationLogger()
+
+        log.t   = df["t"].values
+
+        log.p   = df[["px","py","pz"]].values
+        log.p_d = df[["px_d","py_d","pz_d"]].values
+
+        log.v   = df[["vx","vy","vz"]].values
+        log.v_d = df[["vx_d","vy_d","vz_d"]].values
+
+        log.euler = df[["psi","theta","phi"]].values
+
+        # ω динамически
+        omega_cols = [c for c in df.columns if "omega_" in c and "cmd" not in c]
+        omega_cmd_cols = [c for c in df.columns if "omega_cmd" in c]
+
+        log.omega     = df[omega_cols].values
+        log.omega_cmd = df[omega_cmd_cols].values
+
+        log.fc        = df[["fc_x","fc_y","fc_z"]].values
+        log.Tc        = df["Tc"].values
+        log.integral  = df[["int_x","int_y","int_z"]].values
+        log.fault     = df["fault"].values
+
+        print(f"[LOG] Данные загружены из {filename}")
+
+        return log
+
+    def save_csv(self, filename="simulation_log.csv"):
+        if isinstance(self.t, list):
+            self.to_numpy()
+
+        n_rotors = self.omega.shape[1]
+
+        header = [
+            "t",
+            "px","py","pz",
+            "px_d","py_d","pz_d",
+            "vx","vy","vz",
+            "vx_d","vy_d","vz_d",
+            "psi","theta","phi",
+        ]
+
+        # ω
+        for i in range(n_rotors):
+            header.append(f"omega_{i+1}")
+
+        for i in range(n_rotors):
+            header.append(f"omega_cmd_{i+1}")
+
+        # диагностика
+        header += [
+            "fc_x","fc_y","fc_z",
+            "Tc",
+            "int_x","int_y","int_z",
+            "fault"
+        ]
+
+        with open(filename, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+
+            for i in range(len(self.t)):
+                row = [
+                    self.t[i],
+                    *self.p[i],
+                    *self.p_d[i],
+                    *self.v[i],
+                    *self.v_d[i],
+                    *self.euler[i],
+                ]
+
+                row += list(self.omega[i])
+                row += list(self.omega_cmd[i])
+
+                row += [
+                    *self.fc[i],
+                    self.Tc[i],
+                    *self.integral[i],
+                    self.fault[i]
+                ]
+
+                writer.writerow(row)
+
+        print(f"[LOG] Данные сохранены в {filename}")
     def print_diagnostics(self):
         """Печатает в консоль ключевые моменты нестабильности"""
         self.to_numpy() if isinstance(self.t, list) else None
@@ -102,18 +233,32 @@ class SimulationLogger:
         print("═══════════════════\n")
 
 
-class Plotter:
-    """Построение графиков"""
+import numpy as np
+import matplotlib.pyplot as plt
 
-    def __init__(self, log: SimulationLogger):
+
+class Plotter:
+    def __init__(self, log):
         self.log = log
 
+    def _get_fault_time(self):
+        fault = self.log.fault
+        if np.any(fault):
+            return self.log.t[np.argmax(fault > 0)]
+        return None
+
+    def _add_fault_line(self, ax):
+        t_f = self._get_fault_time()
+        if t_f is not None:
+            ax.axvline(t_f, color='red', linestyle='--',
+                       linewidth=1.5, label=r"$t_f$ — момент отказа")
+
+    # ─────────────────────────────
     def plot_all(self):
         if isinstance(self.log.t, list):
             self.log.to_numpy()
 
-        self.log.print_diagnostics()
-
+        self.plot_obstacles_2d()
         self.plot_trajectory()
         self.plot_position()
         self.plot_velocity()
@@ -122,79 +267,253 @@ class Plotter:
         self.plot_rotor_commands()
         self.plot_errors()
         self.plot_thrust()
-        self.plot_diagnostics()   
+        self.plot_diagnostics()
 
         plt.show()
+
+    # ─────────────────────────────
+    def plot_obstacles_2d(self):
+        obs = getattr(self.log, "obstacles_2d", None)
+        if not obs:
+            return
+
+        fig, ax = plt.subplots()
+        for o in obs:
+            if o.get("type") == "box":
+                cx, cy = o["cx"], o["cy"]
+                sx, sy = o["sx"], o["sy"]
+                rect = plt.Rectangle((cx - 0.5 * sx, cy - 0.5 * sy), sx, sy,
+                                     fill=True, alpha=0.35, edgecolor='k')
+                ax.add_patch(rect)
+            elif o.get("type") == "cyl":
+                cx, cy, r = o["cx"], o["cy"], o["r"]
+                circle = plt.Circle((cx, cy), r, fill=True, alpha=0.35, edgecolor='k')
+                ax.add_patch(circle)
+
+        p0 = getattr(self.log, "start_xyz", None)
+        pg = getattr(self.log, "goal_xyz", None)
+        if p0 is not None:
+            ax.scatter([p0[0]], [p0[1]], c='green', s=70, label='start')
+        if pg is not None:
+            ax.scatter([pg[0]], [pg[1]], c='red', s=70, label='goal')
+
+        if hasattr(self.log, "p_d") and len(self.log.p_d) > 0:
+            ax.plot(self.log.p_d[:, 0], self.log.p_d[:, 1], 'b--', linewidth=1.5, label='A* ref (XY)')
+        if hasattr(self.log, "p") and len(self.log.p) > 0:
+            ax.plot(self.log.p[:, 0], self.log.p[:, 1], 'k', linewidth=1.5, label='flight (XY)')
+
+        ax.set_aspect('equal', 'box')
+        ax.set_xlabel('X, м')
+        ax.set_ylabel('Y, м')
+        ax.set_title('2D карта препятствий и траектория')
+        ax.grid(True)
+        ax.legend()
 
     # ─────────────────────────────
     def plot_trajectory(self):
         fig = plt.figure()
         ax = fig.add_subplot(projection='3d')
-        ax.plot(self.log.p_d[:,0], self.log.p_d[:,1], self.log.p_d[:,2], label="Desired")
-        ax.plot(self.log.p[:,0],   self.log.p[:,1],   self.log.p[:,2],   label="UAV")
-        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_title("Trajectory"); ax.legend(); ax.grid()
 
+        self._draw_obstacles_3d(ax)
+
+        ax.plot(self.log.p_d[:,0], self.log.p_d[:,1], self.log.p_d[:,2],
+                label=r"$\mathbf{p}_d$")
+        ax.plot(self.log.p[:,0], self.log.p[:,1], self.log.p[:,2],
+                label=r"$\mathbf{p}$")
+
+        ax.set_xlabel("X, м")
+        ax.set_ylabel("Y, м")
+        ax.set_zlabel("Z, м")
+        ax.set_title("Пространственная траектория ЛА")
+        ax.view_init(elev=28, azim=-52)
+        ax.legend()
+        ax.grid()
+
+    def _draw_obstacles_3d(self, ax):
+        types = getattr(self.log, "obstacle_types", None)
+        prm = getattr(self.log, "obstacle_params", None)
+        if types is None or prm is None:
+            return
+
+        n = min(len(types), len(prm) // 7)
+        for i in range(n):
+            k = i * 7
+            t = int(types[i])
+            cx, cy, cz = float(prm[k+0]), float(prm[k+1]), float(prm[k+2])
+            a, b, c = float(prm[k+3]), float(prm[k+4]), float(prm[k+5])
+
+            if t == 1:
+                self._plot_cylinder(ax, cx, cy, cz, radius=a, height=b,
+                                    color=(0.55, 0.55, 0.72, 0.26))
+            else:
+                self._plot_box(ax, cx, cy, cz, sx=a, sy=b, sz=c,
+                               color=(0.50, 0.50, 0.68, 0.24))
+
+    @staticmethod
+    def _plot_box(ax, cx, cy, cz, sx, sy, sz, color):
+        x0, x1 = cx - 0.5*sx, cx + 0.5*sx
+        y0, y1 = cy - 0.5*sy, cy + 0.5*sy
+        z0, z1 = cz - 0.5*sz, cz + 0.5*sz
+
+        v = np.array([
+            [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+            [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+        ])
+        faces = [
+            [v[0], v[1], v[2], v[3]],
+            [v[4], v[5], v[6], v[7]],
+            [v[0], v[1], v[5], v[4]],
+            [v[1], v[2], v[6], v[5]],
+            [v[2], v[3], v[7], v[6]],
+            [v[3], v[0], v[4], v[7]],
+        ]
+        poly = Poly3DCollection(faces, facecolors=[color], edgecolors=(0.2,0.2,0.3,0.35), linewidths=0.6)
+        ax.add_collection3d(poly)
+
+    @staticmethod
+    def _plot_cylinder(ax, cx, cy, cz, radius, height, color):
+        z0, z1 = cz - 0.5*height, cz + 0.5*height
+        th = np.linspace(0, 2*np.pi, 24)
+        z = np.array([z0, z1])
+        thg, zg = np.meshgrid(th, z)
+        xg = cx + radius * np.cos(thg)
+        yg = cy + radius * np.sin(thg)
+        ax.plot_surface(xg, yg, zg, color=color, linewidth=0, antialiased=True, shade=True)
+
+    # ─────────────────────────────
     def plot_position(self):
         plt.figure()
-        for i, ax in enumerate(['x','y','z']):
-            plt.plot(self.log.t, self.log.p[:,i],   label=f"{ax} UAV")
-            plt.plot(self.log.t, self.log.p_d[:,i], '--', label=f"{ax} desired")
-        plt.xlabel("Time [s]"); plt.ylabel("Position [m]")
-        plt.title("Position tracking"); plt.legend(); plt.grid()
 
+        labels = ['x','y','z']
+        for i, ax_name in enumerate(labels):
+            plt.plot(self.log.t, self.log.p[:,i],
+                     label=rf"$p_{ax_name}$")
+            plt.plot(self.log.t, self.log.p_d[:,i], '--',
+                     label=rf"$p^d_{ax_name}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel("Положение, м")
+        plt.title(r"Отслеживание положения: $\mathbf{p}$")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_velocity(self):
         plt.figure()
-        for i, ax in enumerate(['vx','vy','vz']):
-            plt.plot(self.log.t, self.log.v[:,i],   label=f"{ax} UAV")
-            plt.plot(self.log.t, self.log.v_d[:,i], '--', label=f"{ax} desired")
-        plt.xlabel("Time [s]"); plt.ylabel("Velocity [m/s]")
-        plt.title("Velocity tracking"); plt.legend(); plt.grid()
 
+        labels = ['x','y','z']
+        for i, ax_name in enumerate(labels):
+            plt.plot(self.log.t, self.log.v[:,i],
+                     label=rf"$v_{ax_name}$")
+            plt.plot(self.log.t, self.log.v_d[:,i], '--',
+                     label=rf"$v^d_{ax_name}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel("Скорость, м/с")
+        plt.title(r"Отслеживание скорости: $\mathbf{v}$")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_euler(self):
         plt.figure()
-        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,0]), label="yaw")
-        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,1]), label="pitch")
-        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,2]), label="roll")
-        plt.xlabel("Time [s]"); plt.ylabel("Angle [deg]")
-        plt.title("Euler angles"); plt.legend(); plt.grid()
 
+        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,0]),
+                 label=r"$\psi$ — курс")
+        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,1]),
+                 label=r"$\theta$ — тангаж")
+        plt.plot(self.log.t, np.rad2deg(self.log.euler[:,2]),
+                 label=r"$\phi$ — крен")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel("Углы, град")
+        plt.title("Ориентация: η = [ψ, θ, φ]")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_rotors(self):
         plt.figure()
-        for i in range(self.log.omega.shape[1]):
-            plt.plot(self.log.t, self.log.omega[:, i], label=f"ω{i+1}")
-        plt.xlabel("Time [s]"); plt.ylabel("Rotor speed [rad/s]")
-        plt.title("Rotor angular velocities"); plt.legend(); plt.grid()
 
+        for i in range(self.log.omega.shape[1]):
+            plt.plot(self.log.t, self.log.omega[:, i],
+                     label=rf"$\omega_{i+1}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel(r"$\omega_i$, рад/с")
+        plt.title("Фактические угловые скорости роторов")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_rotor_commands(self):
         plt.figure()
-        for i in range(self.log.omega_cmd.shape[1]):
-            plt.plot(self.log.t, self.log.omega_cmd[:, i], '--', label=f"cmd{i+1}")
-        plt.xlabel("Time [s]"); plt.ylabel("Commanded ω [rad/s]")
-        plt.title("Rotor commands"); plt.legend(); plt.grid()
 
+        for i in range(self.log.omega_cmd.shape[1]):
+            plt.plot(self.log.t, self.log.omega_cmd[:, i], '--',
+                     label=rf"$\omega_{{{i+1}}}^{{cmd}}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel(r"$\omega_i^{cmd}$, рад/с")
+        plt.title("Командные скорости роторов")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_errors(self):
         plt.figure()
-        err = self.log.p - self.log.p_d
-        for i, ax in enumerate(['x','y','z']):
-            plt.plot(self.log.t, err[:,i], label=f"{ax} error")
-        plt.xlabel("Time [s]"); plt.ylabel("Error [m]")
-        plt.title("Position error"); plt.legend(); plt.grid()
 
+        e = self.log.p - self.log.p_d
+
+        labels = ['x','y','z']
+        for i, ax_name in enumerate(labels):
+            plt.plot(self.log.t, e[:,i],
+                     label=rf"$e_{ax_name}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel("Ошибка, м")
+        plt.title(r"Ошибка позиционирования: $\mathbf{e}_p$")
+        plt.legend()
+        plt.grid()
+
+    # ─────────────────────────────
     def plot_thrust(self):
         from uav_params import UAVParams
+
         k_f = UAVParams.k_f
         thrust = k_f * self.log.omega**2
         thrust_total = np.sum(thrust, axis=1)
-        plt.figure()
-        plt.plot(self.log.t, thrust_total, label="Total", linewidth=2)
-        for i in range(thrust.shape[1]):
-            plt.plot(self.log.t, thrust[:, i], '--', label=f"T{i+1}")
-        plt.xlabel("Time [s]"); plt.ylabel("Thrust [N]")
-        plt.title("Rotor thrusts"); plt.legend(); plt.grid()
 
-    # ─────────────────────────────
-    # ДИАГНОСТИЧЕСКИЙ ГРАФИК
+        plt.figure()
+
+        plt.plot(self.log.t, thrust_total,
+                 linewidth=2,
+                 label=r"$T$")
+
+        for i in range(thrust.shape[1]):
+            plt.plot(self.log.t, thrust[:, i], '--',
+                     label=rf"$T_{i+1}$")
+
+        self._add_fault_line(plt.gca())
+
+        plt.xlabel("t, с")
+        plt.ylabel("Тяга, Н")
+        plt.title("Тяги роторов")
+        plt.legend()
+        plt.grid()
+
     # ─────────────────────────────
     def plot_diagnostics(self):
         t       = self.log.t
@@ -203,49 +522,48 @@ class Plotter:
         Tc      = self.log.Tc
         fc_z    = self.log.fc[:, 2]
         int_z   = self.log.integral[:, 2]
-        fault   = self.log.fault
 
         fig, axes = plt.subplots(4, 1, figsize=(10, 10), sharex=True)
-        fig.suptitle("Диагностика: причина нестабильности", fontsize=12)
+        fig.suptitle("Диагностика системы управления")
 
-        # — Полоса отказа
-        def shade_fault(ax):
-            if np.any(fault):
-                t_f = t[np.argmax(fault > 0)]
-                ax.axvline(t_f, color='red', linestyle='--',
-                           linewidth=1.2, label=f"fault t={t_f:.1f}s")
-
-        # 1. vz
+        # vz
         ax = axes[0]
-        ax.plot(t, vz, color='tab:blue', label="vz [м/с]")
-        ax.axhline(0, color='k', linewidth=0.5)
-        ax.axhline( 5, color='red',   linestyle=':', linewidth=1, label="±5 м/с")
-        ax.axhline(-5, color='red',   linestyle=':', linewidth=1)
-        shade_fault(ax)
-        ax.set_ylabel("vz [м/с]"); ax.legend(fontsize=8); ax.grid()
+        ax.plot(t, vz, label=r"$v_z$")
+        ax.axhline(5, color='red', linestyle=':')
+        ax.axhline(-5, color='red', linestyle=':')
+        self._add_fault_line(ax)
+        ax.set_ylabel("v_z, м/с")
+        ax.legend()
+        ax.grid()
 
-        # 2. Тангаж
+        # pitch
         ax = axes[1]
-        ax.plot(t, pitch, color='tab:orange', label="pitch [°]")
-        ax.axhline( 30, color='red', linestyle=':', linewidth=1, label="±30°")
-        ax.axhline(-30, color='red', linestyle=':', linewidth=1)
-        shade_fault(ax)
-        ax.set_ylabel("Pitch [°]"); ax.legend(fontsize=8); ax.grid()
+        ax.plot(t, pitch, label=r"$\theta$")
+        ax.axhline(30, color='red', linestyle=':')
+        ax.axhline(-30, color='red', linestyle=':')
+        self._add_fault_line(ax)
+        ax.set_ylabel("θ, град")
+        ax.legend()
+        ax.grid()
 
-        # 3. Tc и fc_z
+        # тяга
         ax = axes[2]
-        ax.plot(t, Tc,   color='tab:green',  label="Tc [Н]")
-        ax.plot(t, fc_z, color='tab:purple', label="fc_z [Н]", linestyle='--')
-        shade_fault(ax)
-        ax.set_ylabel("Thrust [Н]"); ax.legend(fontsize=8); ax.grid()
+        ax.plot(t, Tc, label=r"$T_c$ — команда тяги")
+        ax.plot(t, fc_z, '--', label=r"$f_{c,z}$")
+        self._add_fault_line(ax)
+        ax.set_ylabel("Сила, Н")
+        ax.legend()
+        ax.grid()
 
-        # 4. Интеграл по Z
+        # интегратор
         ax = axes[3]
-        ax.plot(t, int_z, color='tab:red', label="integral_z [м·с]")
-        ax.axhline( 3, color='gray', linestyle=':', linewidth=1, label="±MAX_INT")
-        ax.axhline(-3, color='gray', linestyle=':', linewidth=1)
-        shade_fault(ax)
-        ax.set_ylabel("Integral z"); ax.set_xlabel("Time [s]")
-        ax.legend(fontsize=8); ax.grid()
+        ax.plot(t, int_z, label=r"$I_z$")
+        ax.axhline(3, color='gray', linestyle=':')
+        ax.axhline(-3, color='gray', linestyle=':')
+        self._add_fault_line(ax)
+        ax.set_ylabel("I_z")
+        ax.set_xlabel("t, с")
+        ax.legend()
+        ax.grid()
 
         plt.tight_layout()

@@ -1,6 +1,6 @@
 import numpy as np
 from uav_params import UAVParams
-
+from QP_allocator import QPAllocator
 
 class FaultTolerantAllocator:
     """
@@ -31,6 +31,7 @@ class FaultTolerantAllocator:
           fault_flag (int)
           T_max_avail (float)
         """
+        qpallocator = QPAllocator()
         # --- 1. Определение отказов ---
         lam = lambda_r.copy().astype(float)
         for motor_idx, t_fail in self.T_FAIL.items():
@@ -70,13 +71,14 @@ class FaultTolerantAllocator:
         desired = np.array([Tc_cmd, tau_cmd[0],
                             tau_cmd[1], tau_cmd[2]])
 
-        u_active     = np.linalg.pinv(B) @ desired
-        u_max_active = lam[active] * self.k_f * UAVParams.Omega_max**2
-        u_active     = np.clip(u_active, 0, u_max_active)
+        #u_active     = np.linalg.pinv(B) @ desired
+        #u_max_active = lam[active] * self.k_f * UAVParams.Omega_max**2
+        #u_active     = np.clip(u_active, 0, u_max_active)
+        
 
-        # --- 5. Тяга → скорость вращения ---
-        u_full = np.zeros(self.Nr)
-        u_full[active] = u_active
+       
+        
+        u_full = qpallocator.allocate(desired, active, lam * self.k_f * UAVParams.Omega_max**2)
 
         for i in range(self.Nr):
             if failed[i] or u_full[i] <= 0:

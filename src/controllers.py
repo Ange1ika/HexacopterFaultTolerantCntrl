@@ -14,22 +14,22 @@ class PositionController:
     через freeze_integral=True.
     """
 
-    MAX_INT       = 2.0   # м·с  — порог насыщения интегратора
-    MAX_FC        = 2.0 * UAVParams.m * UAVParams.g  # Н — лимит |f_c|
+    MAX_INT       = 0.8   # м·с  — ниже, чтобы убрать стартовый windup
+    MAX_FC        = 1.45 * UAVParams.m * UAVParams.g  # Н — более консервативный лимит |f_c|
 
     def __init__(self):
         A = np.array([[0, 1, 0],
                       [0, 0, 0],
                       [1, 0, 0]])
         B = np.array([[0], [1], [0]])
-        Q = np.diag([5, 0.5, 1])
+        Q = np.diag([1.2, 0.9, 0.15])
         R = np.array([[1.0]])
 
         P  = solve_continuous_are(A, B, Q, R)
         K  = np.linalg.inv(R) @ B.T @ P
-        self.k_p = K[0, 0]
-        self.k_v = K[0, 1]
-        self.k_i = K[0, 2]
+        self.k_p = 0.75 * K[0, 0]
+        self.k_v = 1.25 * K[0, 1]
+        self.k_i = 0.45 * K[0, 2]
 
         self.integral       = np.zeros(3)
         self.freeze_integral = False
@@ -62,7 +62,7 @@ class PositionController:
 
 class AttitudePlanner:
     FC_MIN       = 0.5
-    MAX_TILT_DEG = 25.0
+    MAX_TILT_DEG = 15.0
 
     @staticmethod
     def compute(psi_d: float, f_c: np.ndarray) -> np.ndarray:
@@ -114,8 +114,8 @@ class AttitudeController:
 
     def __init__(self):
         p   = UAVParams
-        w_n = 12.0
-        xi  = 0.5
+        w_n = 9.0
+        xi  = 0.8
 
         # ── Пересчёт коэффициентов ──────────────────────────────────────────
         # В SO(3) ошибка: e_R ≈ θ·n̂  (для малых углов)
@@ -127,10 +127,11 @@ class AttitudeController:
         self.k_omega = 2.0 * xi * w_n * np.diag(J_diag)  # демпфирующий
 
         # Интеграл только по yaw
-        self.k_i_yaw       = 0.15 * self.k_q[2]
+        self.k_i_yaw       = 0.08 * self.k_q[2]
         self.yaw_integral  = 0.0
         self.freeze_integral = False
         self.max_yaw_int   = np.deg2rad(25.0)
+        self.tau_limit     = np.array([0.45, 0.45, 0.30])
 
     def compute(self, q: np.ndarray, q_d: np.ndarray,
                 omega_b: np.ndarray, dt: float) -> np.ndarray:
@@ -161,6 +162,7 @@ class AttitudeController:
                - self.k_omega @ omega_b
                - np.array([0.0, 0.0, self.k_i_yaw * self.yaw_integral])
                + np.cross(omega_b,  UAVParams.J @ omega_b))   # гироскопическая компенсация
+        tau = np.clip(tau, -self.tau_limit, self.tau_limit)
         return tau
 
     def reset_integral(self):
