@@ -24,11 +24,13 @@ public class DroneController : MonoBehaviour
     private Vector3    _targetPos;
     private Quaternion _targetRot;
     private bool       _wasInFault;
+    private bool       _initializedFromSim;
 
     void Start()
     {
         _targetPos = transform.position;
         _targetRot = transform.rotation;
+        _initializedFromSim = false;
 
         if (faultIndicator) faultIndicator.SetActive(false);
     }
@@ -36,6 +38,16 @@ public class DroneController : MonoBehaviour
     void Update()
     {
         if (simClient == null) return;
+        if (!simClient.HasState) return;
+
+        if (!_initializedFromSim)
+        {
+            transform.position = simClient.position;
+            transform.rotation = simClient.rotation;
+            _targetPos = transform.position;
+            _targetRot = transform.rotation;
+            _initializedFromSim = true;
+        }
 
         // ── Позиция и ориентация ─────────────────────────────────────────
         _targetPos = simClient.position;
