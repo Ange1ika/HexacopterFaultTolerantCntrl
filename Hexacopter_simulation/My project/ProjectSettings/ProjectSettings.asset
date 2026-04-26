@@ -4,7 +4,7 @@
 PlayerSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 26
-  productGUID: 4c36a6b862119370fa1b5cb5e28a09b2
+  productGUID: c63b26308375f7577b56541476db047d
   AndroidProfiler: 0
   AndroidFilterTouchesWhenObscured: 0
   AndroidEnableSustainedPerformanceMode: 0
@@ -759,10 +759,10 @@ PlayerSettings:
   apiCompatibilityLevel: 6
   activeInputHandler: 0
   windowsGamepadBackendHint: 0
-  cloudProjectId: 585aa191-4f1e-4061-8ab6-86719aaa76a2
+  cloudProjectId: 056fa36b-eaa9-41c1-90b2-a8bb32d55a49
   framebufferDepthMemorylessMode: 0
   qualitySettingsNames: []
-  projectName: Hexacopter_simulation
+  projectName: My project
   organizationId: unity_c7335bae543935a906d5
   cloudEnabled: 0
   legacyClampBlendShapeWeights: 0

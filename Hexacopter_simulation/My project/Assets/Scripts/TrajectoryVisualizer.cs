@@ -7,13 +7,6 @@ public class TrajectoryVisualizer : MonoBehaviour
     public SimulatorClient simClient;
     public Transform       droneTransform;
 
-    [Header("Spiral preview")]
-    public float radius          = 4f;
-    public float omega_t         = 0.1f;
-    public float w_t             = 1f;
-    public float previewDuration = 100f;
-    public int   spiralPoints    = 500;
-    public Color spiralColor     = new Color(0.3f, 0.6f, 1f, 0.6f);
 
     [Header("Actual path")]
     public int   maxPathPoints = 2000;
@@ -27,15 +20,6 @@ public class TrajectoryVisualizer : MonoBehaviour
 
     void Start()
     {
-        // Линия спирали
-        var spiralGO = new GameObject("SpiralPreview");
-        spiralGO.transform.SetParent(transform);
-        _spiralLine = spiralGO.AddComponent<LineRenderer>();
-        _spiralLine.positionCount = spiralPoints;
-        _spiralLine.startWidth = _spiralLine.endWidth = 0.04f;
-        _spiralLine.material   = new Material(Shader.Find("Sprites/Default"));
-        _spiralLine.startColor = _spiralLine.endColor = spiralColor;
-        DrawSpiral();
 
         // Линия реального пути
         var pathGO = new GameObject("ActualPath");
@@ -46,18 +30,7 @@ public class TrajectoryVisualizer : MonoBehaviour
         _pathLine.useWorldSpace = true;
     }
 
-    void DrawSpiral()
-    {
-        float dt = previewDuration / spiralPoints;
-        for (int i = 0; i < spiralPoints; i++)
-        {
-            float t = i * dt;
-            float x = radius * Mathf.Cos(omega_t * t);
-            float y = radius * Mathf.Sin(omega_t * t);
-            float z = w_t * t;
-            _spiralLine.SetPosition(i, new Vector3(x, z, y)); // ROS→Unity
-        }
-    }
+
 
     void Update()
     {
