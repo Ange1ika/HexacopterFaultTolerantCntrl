@@ -28,7 +28,7 @@ SIM_DT       = 0.01
 SEND_DT      = 0.02
 TCP_HOST     = "127.0.0.1"
 TCP_PORT     = 9999
-SIM_DURATION = 60.0
+SIM_DURATION = 114.0
 
 # Минимальный модуль f_c — AttitudePlanner не должен получать нулевой вектор
 TC_MIN = UAVParams.m * UAVParams.g * 0.3   # Н
@@ -83,7 +83,9 @@ def build_packet(dyn, fault_flag, p_d, t, omega_cmd,
 def simulation_loop(state: SimState):
     dyn    = HexacopterDynamics()
     # Начальная позиция дрона у края карты (окраина)
-    dyn.p  = np.array([-10.0, -10.0, 2.0], dtype=float)
+    
+  
+    dyn.p  = np.array([-18., -18., 3.], dtype=float)
     pos_c  = PositionController()
     att_c  = AttitudeController()
     alloc  = FaultTolerantAllocator()
@@ -154,16 +156,22 @@ def simulation_loop(state: SimState):
 
         # ── 6. Позиционный контроль ───────────────────────────
         f_c = pos_c.compute(dyn.p, v_inertial, p_d, v_d, a_d, dyn.R, SIM_DT)
+        # ── Приоритетная аллокация тяги: Z первым ──────────────────────────────────
+        # Физика: Tc*cos(tilt) должна перекрывать m*g — иначе наклон усиливает подъём.
+        # Выделяем Z-тягу первой, XY получает остаток из общего бюджета.
+        TC_BUDGET   = 1.45 * UAVParams.m * UAVParams.g   # общий лимит |f_c|
+        TC_Z_MAX    = 1.15 * UAVParams.m * UAVParams.g   # максимум по Z (лёгкий набор)
+        TC_Z_MIN    = TC_MIN                              # минимум по Z (без переворота)
 
-        # Физическое ограничение: роторы тянут только вверх.
-        # fc_z < 0 → AttitudePlanner командует перевёрнутую ориентацию → флип.
-        # Зажимаем: пусть дрон просто сбрасывает тягу до минимума, не переворачиваясь.
-        f_c[2] = max(f_c[2], TC_MIN)
+        f_c_z  = float(np.clip(f_c[2], TC_Z_MIN, TC_Z_MAX))
+        # Остаток бюджета для XY
+        xy_budget = float(np.sqrt(max(TC_BUDGET**2 - f_c_z**2, 0.0)))
+        f_c_xy    = f_c[:2].copy()
+        xy_norm   = float(np.linalg.norm(f_c_xy))
+        if xy_norm > xy_budget:
+            f_c_xy = f_c_xy * (xy_budget / xy_norm)
 
-        # Гарантируем минимальный модуль (защита от NaN в AttitudePlanner)
-        fc_norm = np.linalg.norm(f_c)
-        if fc_norm < TC_MIN:
-            f_c = f_c * (TC_MIN / max(fc_norm, 1e-9))
+        f_c = np.array([f_c_xy[0], f_c_xy[1], f_c_z])
 
         # ── 7. Attitude planner ───────────────────────────────
         q_d = AttitudePlanner.compute(psi_d, f_c) 
@@ -184,10 +192,17 @@ def simulation_loop(state: SimState):
         # Иначе при большой z-ошибке интеграл сразу набегает до MAX_INT.
         if latch.latched and pos_c.freeze_integral:
             v_mag = np.linalg.norm(v_inertial)
-            z_err = abs(dyn.p[2] - p_d[2])
-            if v_mag < 0.3 and z_err < 0.5:
+            z_err = dyn.p[2] - p_d[2]
+            xy_err = np.linalg.norm(dyn.p[:2] - p_d[:2])
+            # Z-интеграл: размораживаем отдельно когда ошибка по Z небольшая
+            # или дрон ниже цели (интеграл не нужен чтобы тянуть вверх)
+            if abs(z_err) < 0.4 and abs(v_inertial[2]) < 0.4:
                 pos_c.freeze_integral = False
                 att_c.freeze_integral = False
+            elif z_err > 0.5:
+                # Дрон выше цели — обнуляем z-составляющую интеграла
+                # чтобы замороженный upward-bias не мешал снижению
+                pos_c.integral[2] = 0.0
 
         # ── 11. Шаг динамики ──────────────────────────────────
         dyn.step(omega_cmd, SIM_DT, lambda_r)
@@ -229,15 +244,20 @@ def simulation_loop(state: SimState):
             t_last_send = t
 
         t += SIM_DT
-        if SIM_DURATION > 0 and t > SIM_DURATION:
+        if t > SIM_DURATION:
             print("[SIM] Симуляция завершена")
+            state.running = False
+            break
+        
+        if traj.landed:
+            print(f"[SIM] Достигнута цель за t={t:.2f} сек")
             state.running = False
             break
 
         elapsed = time.perf_counter() - loop_start
-        sleep_t = SIM_DT - elapsed
-        if sleep_t > 0:
-            time.sleep(sleep_t)
+        #sleep_t = SIM_DT - elapsed
+        #if sleep_t > 0:
+        #    time.sleep(sleep_t)
 
     state.running = False
     state.logger  = logger

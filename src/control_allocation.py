@@ -71,14 +71,15 @@ class FaultTolerantAllocator:
         desired = np.array([Tc_cmd, tau_cmd[0],
                             tau_cmd[1], tau_cmd[2]])
 
-        #u_active     = np.linalg.pinv(B) @ desired
-        #u_max_active = lam[active] * self.k_f * UAVParams.Omega_max**2
-        #u_active     = np.clip(u_active, 0, u_max_active)
+        u_active     = np.linalg.pinv(B) @ desired
+        u_max_active = lam[active] * self.k_f * UAVParams.Omega_max**2
+        u_active     = np.clip(u_active, 0, u_max_active)
         
-
-       
+        idx = np.where(active)
+        u_full = np.zeros(self.Nr)
+        u_full[idx] = u_active
         
-        u_full = qpallocator.allocate(desired, active, lam * self.k_f * UAVParams.Omega_max**2)
+        #u_full = qpallocator.allocate(desired, active, lam * self.k_f * UAVParams.Omega_max**2)
 
         for i in range(self.Nr):
             if failed[i] or u_full[i] <= 0:

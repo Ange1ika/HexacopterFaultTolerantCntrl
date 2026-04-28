@@ -14,7 +14,7 @@ class PositionController:
     через freeze_integral=True.
     """
 
-    MAX_INT       = 0.8   # м·с  — ниже, чтобы убрать стартовый windup
+    MAX_INT       = 0.8  
     MAX_FC        = 1.45 * UAVParams.m * UAVParams.g  # Н — более консервативный лимит |f_c|
 
     def __init__(self):
@@ -28,8 +28,8 @@ class PositionController:
         P  = solve_continuous_are(A, B, Q, R)
         K  = np.linalg.inv(R) @ B.T @ P
         self.k_p = 0.75 * K[0, 0]
-        self.k_v = 1.25 * K[0, 1]
-        self.k_i = 0.45 * K[0, 2]
+        self.k_v = 1.45 * K[0, 1]
+        self.k_i = 0.2 * K[0, 2]
 
         self.integral       = np.zeros(3)
         self.freeze_integral = False
@@ -62,7 +62,7 @@ class PositionController:
 
 class AttitudePlanner:
     FC_MIN       = 0.5
-    MAX_TILT_DEG = 15.0
+    MAX_TILT_DEG = 35.0
 
     @staticmethod
     def compute(psi_d: float, f_c: np.ndarray) -> np.ndarray:
@@ -74,6 +74,12 @@ class AttitudePlanner:
             f_c     = np.array([0.0, 0.0, AttitudePlanner.FC_MIN])
             fc_norm = AttitudePlanner.FC_MIN
 
+        k_p = f_c / fc_norm
+        # После нормализации f_c, до вычисления k_p
+        fc_z_min = 0.3 * UAVParams.m * UAVParams.g
+        if f_c[2] < fc_z_min:
+            f_c[2] = fc_z_min
+        fc_norm = np.linalg.norm(f_c)
         k_p = f_c / fc_norm
 
         if k_p[2] > 1e-6:
